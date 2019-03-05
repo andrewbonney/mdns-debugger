@@ -279,8 +279,10 @@ if __name__ == "__main__":
             sort_dict[ip_src] = query_tracking[ip_src]["pkt_count"]
         for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
             rate = round(sort_dict[ip_src]/float(duration), 2)
-            if rate > 1:
+            if rate > 0.4:
                 print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+            elif rate > 0.2:
+                print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
             else:
                 print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
 
@@ -290,8 +292,10 @@ if __name__ == "__main__":
             sort_dict[ip_src] = response_tracking[ip_src]["pkt_count"]
         for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
             rate = round(sort_dict[ip_src]/float(duration), 2)
-            if rate > 1:
+            if rate > 0.4:
                 print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+            elif rate > 0.2:
+                print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
             else:
                 print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
 
