@@ -7,6 +7,7 @@ import dpkt
 import sys
 import operator
 import time
+import argparse
 
 from colorama import Fore, Style
 
@@ -211,8 +212,15 @@ def parse_packet(header, packet):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("python mdns-debugger.py <interface-name>")
+    parser = argparse.ArgumentParser(description='mDNS debugger')
+    parser.add_argument('--interface', default=None, help='name of a network interface to perform a live capture from')
+    parser.add_argument('--file', default=None, help='path to a pcap format file containing packets to analyse')
+    args = parser.parse_args()
+
+    if not args.interface and not args.file:
+        parser.print_usage()
+    elif args.interface and args.file:
+        print("Only one of 'interface' or 'file' should be specified")
     else:
         ip4_multicast_group = '224.0.0.251'
         ip6_multicast_group = 'ff02::fb'
@@ -242,7 +250,10 @@ if __name__ == "__main__":
         stop_ts = None
         packet_count = 0
 
-        cap = pcapy.open_live(sys.argv[1], 65536, 1, 1000) # Don't use 'any', it doesn't work!
+        if args.interface:
+            cap = pcapy.open_live(args.interface, 65536, 1, 1000)
+        elif args.file:
+            cap = pcapy.open_offline(args.file)
         cap.setfilter(pkt_filter)
 
         try:
@@ -255,6 +266,8 @@ if __name__ == "__main__":
                         if not start_ts:
                             start_ts = header.getts()[0]
                         stop_ts = header.getts()[0]
+                    elif args.file:
+                        break
                 except socket.timeout:
                     pass
         except KeyboardInterrupt:
