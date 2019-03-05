@@ -303,6 +303,11 @@ if __name__ == "__main__":
 
         print(Style.RESET_ALL + "\n---- Invalid mDNS Packets ----")
         for eth_addr, count in sorted(invalid_packets.items(), key=operator.itemgetter(1)):
-            print("{} ({} packets total)".format(eth_addr, count))
+            if eth_addr in ip4_maps:
+                print("{} ({} packets total)".format(ip4_maps[eth_addr], count))
+            elif eth_addr in ip6_maps:
+                print("{} ({} packets total)".format(ip6_maps[eth_addr], count))
+            else:
+                print("{} ({} packets total)".format(eth_addr, count))
 
         print("")
