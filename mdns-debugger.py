@@ -53,8 +53,10 @@ def test_query_interval(query_tracker):
         interval_new = time_diff(query_tracker[1], query_tracker[2])
         if interval_old < 1 or interval_new < 1:
             return min(interval_old, interval_new)
-        if interval_new < interval_old * 2:
+        # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
+        if interval_new < interval_old * 2 and interval_new < 3600:
             return interval_new
+    return False
 
 def bytes_to_int(bytes):
     return int(bytes.encode("hex"), 16)
