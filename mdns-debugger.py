@@ -326,7 +326,9 @@ if __name__ == "__main__":
         cap.setfilter(pkt_filter)
 
         packet_count = 0
-        start_ts = time.time()
+        start_ts_live = time.time()
+        start_ts_file = None
+        stop_ts_file = None
 
         try:
             while True:
@@ -335,6 +337,9 @@ if __name__ == "__main__":
                     if packet:
                         packet_count += 1
                         parse_packet(header, packet)
+                        if not start_ts_file:
+                            start_ts_file = header.getts()[0]
+                        stop_ts_file = header.getts()[0]
                     elif args.file:
                         break
                 except socket.timeout:
@@ -342,7 +347,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             pass
 
-        stop_ts = time.time()
+        stop_ts_live = time.time()
 
         try:
             cap.close()
@@ -351,6 +356,10 @@ if __name__ == "__main__":
 
         leave_groups(v4_sock, v6_sock)
 
-        duration = max(1, int(stop_ts - start_ts))
+        duration = 1
+        if args.file and stop_ts_file is not None and start_ts_file is not None:
+            duration = max(duration, int(stop_ts_file - start_ts_file))
+        else:
+            duration = max(duration, int(stop_ts_live - start_ts_live))
 
         print_report(packet_count, duration)
