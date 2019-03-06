@@ -23,6 +23,9 @@ invalid_packets = {}
 ip4_maps = {}
 ip6_maps = {}
 
+IP4_MULTICAST_GROUP = '224.0.0.251'
+IP6_MULTICAST_GROUP = 'ff02::fb'
+
 DNS_TYPES = {1: "A", 12: "PTR", 16: "TXT", 28: "AAAA", 33: "SRV"}
 
 # Time to wait before issuing warnings
@@ -230,6 +233,65 @@ def parse_packet(header, packet):
         print("INVALID: Ethernet protocol for mDNS set to '{}' by '{}'".format(eth.type, eth_addr(eth.src)))
         record_invalid_packet(eth_addr(eth.src))
 
+def print_report(packet_count, duration):
+    print("\n---- SUMMARY ----")
+    print("Analysed {} packets over {} seconds".format(packet_count, duration))
+
+    print("\n---- Queries ----")
+    sort_dict = {}
+    for ip_src in query_tracking:
+        sort_dict[ip_src] = query_tracking[ip_src]["pkt_count"]
+    for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
+        rate = round(sort_dict[ip_src]/float(duration), 2)
+        if rate > 0.4:
+            print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+        elif rate > 0.2:
+            print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+        else:
+            print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+
+    print(Style.RESET_ALL + "\n---- Responses ----")
+    sort_dict = {}
+    for ip_src in response_tracking:
+        sort_dict[ip_src] = response_tracking[ip_src]["pkt_count"]
+    for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
+        rate = round(sort_dict[ip_src]/float(duration), 2)
+        if rate > 0.4:
+            print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+        elif rate > 0.2:
+            print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+        else:
+            print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
+
+    print(Style.RESET_ALL + "\n---- Invalid mDNS Packets ----")
+    for eth_addr, count in sorted(invalid_packets.items(), key=operator.itemgetter(1)):
+        if eth_addr in ip4_maps:
+            print("{} ({} packets total)".format(ip4_maps[eth_addr], count))
+        elif eth_addr in ip6_maps:
+            print("{} ({} packets total)".format(ip6_maps[eth_addr], count))
+        else:
+            print("{} ({} packets total)".format(eth_addr, count))
+
+    print("")
+
+def create_mreqs():
+    v4_group = socket.inet_pton(socket.AF_INET, IP4_MULTICAST_GROUP)
+    v4_mreq = struct.pack('4sL', v4_group, socket.INADDR_ANY)
+
+    v6_group = socket.inet_pton(socket.AF_INET6, IP6_MULTICAST_GROUP)
+    v6_mreq = struct.pack("16s16s", v6_group, chr(0)*16)
+
+    return v4_mreq, v6_mreq
+
+def join_groups(v4_sock, v6_sock):
+    v4_mreq, v6_mreq = create_mreqs()
+    v4_sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, v4_mreq)
+    v6_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, v6_mreq)
+
+def leave_groups(v4_sock, v6_sock):
+    v4_mreq, v6_mreq = create_mreqs()
+    v4_sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, v4_mreq)
+    v6_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_LEAVE_GROUP, v6_mreq)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='mDNS debugger')
@@ -242,8 +304,6 @@ if __name__ == "__main__":
     elif args.interface and args.file:
         print("Only one of 'interface' or 'file' should be specified")
     else:
-        ip4_multicast_group = '224.0.0.251'
-        ip6_multicast_group = 'ff02::fb'
         ip4_server_address = ('', 9898) # Random port
         ip6_server_address = ('', 9899) # Random port
 
@@ -255,26 +315,18 @@ if __name__ == "__main__":
         v4_sock.bind(ip4_server_address)
         v6_sock.bind(ip6_server_address)
 
-        v4_group = socket.inet_pton(socket.AF_INET, ip4_multicast_group)
-        v4_mreq = struct.pack('4sL', v4_group, socket.INADDR_ANY)
+        join_groups(v4_sock, v6_sock)
 
-        v6_group = socket.inet_pton(socket.AF_INET6, ip6_multicast_group)
-        v6_mreq = struct.pack("16s16s", v6_group, chr(0)*16)
-
-        v4_sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, v4_mreq)
-        v6_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, v6_mreq)
-
-        pkt_filter = "dst host " + ip4_multicast_group + " or dst host " + ip6_multicast_group
-
-        start_ts = None
-        stop_ts = None
-        packet_count = 0
+        pkt_filter = "dst host " + IP4_MULTICAST_GROUP + " or dst host " + IP6_MULTICAST_GROUP
 
         if args.interface:
             cap = pcapy.open_live(args.interface, 65536, 1, 1000)
         elif args.file:
             cap = pcapy.open_offline(args.file)
         cap.setfilter(pkt_filter)
+
+        packet_count = 0
+        start_ts = time.time()
 
         try:
             while True:
@@ -283,9 +335,6 @@ if __name__ == "__main__":
                     if packet:
                         packet_count += 1
                         parse_packet(header, packet)
-                        if not start_ts:
-                            start_ts = header.getts()[0]
-                        stop_ts = header.getts()[0]
                     elif args.file:
                         break
                 except socket.timeout:
@@ -293,54 +342,15 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             pass
 
+        stop_ts = time.time()
+
         try:
             cap.close()
         except:
             pass
 
-        v4_sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, v4_mreq)
-        v6_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_LEAVE_GROUP, v6_mreq)
+        leave_groups(v4_sock, v6_sock)
 
-        duration = 1
-        if stop_ts is not None and start_ts is not None:
-            duration = max(stop_ts - start_ts, 1)
+        duration = max(1, int(stop_ts - start_ts))
 
-        print("\n---- SUMMARY ----")
-        print("Analysed {} packets over {} seconds".format(packet_count, duration))
-
-        print("\n---- Queries ----")
-        sort_dict = {}
-        for ip_src in query_tracking:
-            sort_dict[ip_src] = query_tracking[ip_src]["pkt_count"]
-        for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
-            rate = round(sort_dict[ip_src]/float(duration), 2)
-            if rate > 0.4:
-                print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-            elif rate > 0.2:
-                print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-            else:
-                print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-
-        print(Style.RESET_ALL + "\n---- Responses ----")
-        sort_dict = {}
-        for ip_src in response_tracking:
-            sort_dict[ip_src] = response_tracking[ip_src]["pkt_count"]
-        for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
-            rate = round(sort_dict[ip_src]/float(duration), 2)
-            if rate > 0.4:
-                print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-            elif rate > 0.2:
-                print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-            else:
-                print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-
-        print(Style.RESET_ALL + "\n---- Invalid mDNS Packets ----")
-        for eth_addr, count in sorted(invalid_packets.items(), key=operator.itemgetter(1)):
-            if eth_addr in ip4_maps:
-                print("{} ({} packets total)".format(ip4_maps[eth_addr], count))
-            elif eth_addr in ip6_maps:
-                print("{} ({} packets total)".format(ip6_maps[eth_addr], count))
-            else:
-                print("{} ({} packets total)".format(eth_addr, count))
-
-        print("")
+        print_report(packet_count, duration)
