@@ -13,6 +13,7 @@ from colorama import Fore, Style
 
 #TODO: Ideally avoid flagging items as bad if they consitute a device restarting or similar and re-querying as a result
 #TODO: When flagging high traffic rates, don't average over the whole run time, but over successive periods of 60s or so
+#TODO: Don't flag timing issues if the backoff interval has just been reset, potentially due to an expired TTL
 
 query_tracking = {}
 response_tracking = {}
