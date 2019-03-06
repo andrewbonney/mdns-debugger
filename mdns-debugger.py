@@ -17,6 +17,7 @@ from colorama import Fore, Style
 query_tracking = {}
 response_tracking = {}
 active_queries = {}
+active_responses = {}
 invalid_packets = {}
 ip4_maps = {}
 ip6_maps = {}
@@ -25,6 +26,12 @@ DNS_TYPES = {1: "A", 12: "PTR", 16: "TXT", 28: "AAAA", 33: "SRV"}
 
 # Time to wait before issuing warnings
 INIT_TIME = time.time() + 2
+
+# How long after a query must all responses have been sent by
+QUERY_RESPONSE_LIMIT = 2
+
+# How long after sending a response may a server send additional related response packets for
+GRATUITOUS_RESPONSE_LIMIT = 2
 
 def dns_str(dns_type):
     try:
@@ -141,10 +148,22 @@ def parse_ip(header, eth, ip):
                 else:
                     response_tracking[ip_addr]["pkt_count"] += 1
                 for response in mdns.an:
+                    if response.name not in active_queries:
+                        active_queries[response.name] = {}
+                    if response.type not in active_queries[response.name]:
+                        active_queries[response.name][response.type] = (0, 0)
+                    if ip_addr not in active_responses:
+                        active_responses[ip_addr] = (0, 0)
+
                     current_ts = header.getts()
-                    if response.name not in active_queries or response.type not in active_queries[response.name] \
-                        or time_diff(active_queries[response.name][response.type], current_ts) > 2 and time.time() > INIT_TIME:
-                        print("TIMING: Response sent when no recent query was issued '{}' '{}' - Name: {}, Type: {}".format(eth_addr(eth.src), ip_addr, response.name, dns_str(response.type)))
+
+                    if time.time() > INIT_TIME:
+                        if time_diff(active_queries[response.name][response.type], current_ts) > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
+                            print("TIMING: Response sent when no recent query was issued '{}' '{}' - Name: {}, Type: {}".format(eth_addr(eth.src), ip_addr, response.name, dns_str(response.type)))
+
+                    if time_diff(active_queries[response.name][response.type], current_ts) < QUERY_RESPONSE_LIMIT:
+                        # A valid query has been responded to, but there may be more gratuitous records to send (for example SRV/TXT/A following a PTR)
+                        active_responses[ip_addr] = current_ts
 
                     if response.name not in response_tracking[ip_addr]:
                         response_tracking[ip_addr][response.name] = {}
