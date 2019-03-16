@@ -44,9 +44,13 @@ QUERY_RESPONSE_LIMIT = 2
 # How long after sending a response may a server send additional related response packets for
 GRATUITOUS_RESPONSE_LIMIT = 2
 
+# TTLs and requirements defined in the RFC
 GENERAL_TTL = 75*60
 HOSTNAME_TTL = 120
 HOSTNAME_TYPES = [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV]
+
+# Whether to show warnings or not, as set via command line argument
+SHOW_WARNINGS = True
 
 def dns_str(dns_type):
     try:
@@ -107,7 +111,109 @@ def print_issue(msg, eth, ip_addr):
     print(msg)
     print("-> Src MAC: {}, Src IP: {}".format(eth_addr(eth.src), ip_addr))
 
-def parse_ip(header, eth, ip, show_warnings):
+def analyse_mdns(udp, eth, ip_addr):
+    mdns = dpkt.dns.DNS(udp.data)
+    mdns_query = False
+    mdns_response = False
+    if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000 and SHOW_WARNINGS:
+        print_issue("WARNING: Query identifier not set to zero for a fully compliant multicast DNS message", eth, ip_addr)
+    if bytes_to_int(udp.data[2:4]) & 0x8000 == 0x0000:
+        mdns_query = True
+    elif bytes_to_int(udp.data[2:4]) & 0x8000 == 0x8000:
+        mdns_response = True
+
+    if mdns_query and mdns_response:
+        print_issue("ERROR: Message indicates that it is both a query and a response", eth, ip_addr)
+
+    if udp.sport != 5353:
+        # See https://tools.ietf.org/html/rfc6762#section-5.1. The UDP source port of 5353
+        if mdns_query and SHOW_WARNINGS:
+            print_issue("WARNING: Querying host is using one-shot queries with a source port of 5353 and is not fully compliant with mDNS", eth, ip_addr)
+        elif mdns_response:
+            print_issue("INVALID: Responding host is using one-shot responses with a source port of 5353 and is not compliant with mDNS", eth, ip_addr)
+            record_invalid_packet(eth_addr(eth.src))
+
+    if len(mdns.qd) == 0 and mdns_query:
+        print_issue("INVALID: mDNS query sent without any questions", eth, ip_addr)
+        record_invalid_packet(eth_addr(eth.src))
+    if len(mdns.an) == 0 and mdns_response:
+        print_issue("INVALID: mDNS response sent without any responses", eth, ip_addr)
+        record_invalid_packet(eth_addr(eth.src))
+
+    if mdns_response and len(mdns.qd) > 0:
+        # See https://tools.ietf.org/html/rfc6762#section-6 and https://tools.ietf.org/html/rfc6762#section-7.1
+        print_issue("INVALID: mDNS responses must not contain queries", eth, ip_addr)
+        record_invalid_packet(eth_addr(eth.src))
+
+    if mdns_query:
+        analyse_query(mdns, eth, ip_addr)
+
+    if mdns_response:
+        analyse_response(mdns, eth, ip_addr)
+
+def analyse_query(mdns, eth, ip_addr):
+    if ip_addr not in query_tracking:
+        query_tracking[ip_addr] = {"pkt_count": 1}
+    else:
+        query_tracking[ip_addr]["pkt_count"] += 1
+    for question in mdns.qd:
+        if question.name not in query_tracking[ip_addr]:
+            query_tracking[ip_addr][question.name] = {}
+        if question.type not in query_tracking[ip_addr][question.name]:
+            query_tracking[ip_addr][question.name][question.type] = []
+        query_tracker = query_tracking[ip_addr][question.name][question.type]
+        track_query_interval(query_tracker, header.getts())
+        result = test_query_interval(question.name, question.type, query_tracker)
+        if result:
+            # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
+            print_issue("TIMING: Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
+
+        if not question.name.endswith(".local") and not question.name.endswith(".arpa") and SHOW_WARNINGS:
+            # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
+            print_issue("WARNING: Multicast DNS query for a unicast-only record - Name: {}, Type: {}".format(question.name, dns_str(question.type)), eth, ip_addr)
+
+        if question.name not in active_queries:
+            active_queries[question.name] = {}
+        active_queries[question.name][question.type] = header.getts()
+
+def analyse_response(mdns, eth, ip_addr):
+    if ip_addr not in response_tracking:
+        response_tracking[ip_addr] = {"pkt_count": 1}
+    else:
+        response_tracking[ip_addr]["pkt_count"] += 1
+    for response in mdns.an:
+        if response.name not in active_queries:
+            active_queries[response.name] = {}
+        if response.type not in active_queries[response.name]:
+            active_queries[response.name][response.type] = (0, 0)
+        if ip_addr not in active_responses:
+            active_responses[ip_addr] = (0, 0)
+
+        current_ts = header.getts()
+
+        if time.time() > INIT_TIME:
+            if time_diff(active_queries[response.name][response.type], current_ts) > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
+                print_issue("TIMING: Response sent when no recent query was issued - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
+
+        if time_diff(active_queries[response.name][response.type], current_ts) < QUERY_RESPONSE_LIMIT:
+            # A valid query has been responded to, but there may be more gratuitous records to send (for example SRV/TXT/A following a PTR)
+            active_responses[ip_addr] = current_ts
+
+        if response.name not in response_tracking[ip_addr]:
+            response_tracking[ip_addr][response.name] = {}
+        if response.type not in response_tracking[ip_addr][response.name]:
+            response_tracking[ip_addr][response.name][response.type] = None
+        response_tracking[ip_addr][response.name][response.type] = header.getts()
+
+        if not response.name.endswith(".local") and not response.name.endswith(".arpa") and SHOW_WARNINGS:
+            # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
+            print_issue("WARNING: Multicast DNS response for a unicast-only record by host - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
+
+        result = test_ttl(response.name, response.type, response.ttl)
+        if result and SHOW_WARNINGS:
+            print_issue("WARNING: Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s. This may cause unusually high query volumes.".format(response.name, DNS_TYPES[response.type], result, response.ttl), eth, ip_addr)
+
+def parse_ip(header, eth, ip):
     ip_data = ip.data
 
     ip_addr = None
@@ -119,101 +225,7 @@ def parse_ip(header, eth, ip, show_warnings):
     if isinstance(ip_data, dpkt.udp.UDP):
         udp = ip_data
         if udp.dport == 5353:
-            mdns = dpkt.dns.DNS(udp.data)
-            mdns_query = False
-            mdns_response = False
-            if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000 and show_warnings:
-                print_issue("WARNING: Query identifier not set to zero for a fully compliant multicast DNS message", eth, ip_addr)
-            if bytes_to_int(udp.data[2:4]) & 0x8000 == 0x0000:
-                mdns_query = True
-            elif bytes_to_int(udp.data[2:4]) & 0x8000 == 0x8000:
-                mdns_response = True
-
-            if mdns_query and mdns_response:
-                print_issue("ERROR: Message indicates that it is both a query and a response", eth, ip_addr)
-
-            if udp.sport != 5353:
-                # See https://tools.ietf.org/html/rfc6762#section-5.1. The UDP source port of 5353
-                if mdns_query and show_warnings:
-                    print_issue("WARNING: Querying host is using one-shot queries with a source port of 5353 and is not fully compliant with mDNS", eth, ip_addr)
-                elif mdns_response:
-                    print_issue("INVALID: Responding host is using one-shot responses with a source port of 5353 and is not compliant with mDNS", eth, ip_addr)
-                    record_invalid_packet(eth_addr(eth.src))
-
-            if len(mdns.qd) == 0 and mdns_query:
-                print_issue("INVALID: mDNS query sent without any questions", eth, ip_addr)
-                record_invalid_packet(eth_addr(eth.src))
-            if len(mdns.an) == 0 and mdns_response:
-                print_issue("INVALID: mDNS response sent without any responses", eth, ip_addr)
-                record_invalid_packet(eth_addr(eth.src))
-
-            if mdns_response and len(mdns.qd) > 0:
-                # See https://tools.ietf.org/html/rfc6762#section-6 and https://tools.ietf.org/html/rfc6762#section-7.1
-                print_issue("INVALID: mDNS responses must not contain queries", eth, ip_addr)
-                record_invalid_packet(eth_addr(eth.src))
-
-            if mdns_query:
-                if ip_addr not in query_tracking:
-                    query_tracking[ip_addr] = {"pkt_count": 1}
-                else:
-                    query_tracking[ip_addr]["pkt_count"] += 1
-                for question in mdns.qd:
-                    if question.name not in query_tracking[ip_addr]:
-                        query_tracking[ip_addr][question.name] = {}
-                    if question.type not in query_tracking[ip_addr][question.name]:
-                        query_tracking[ip_addr][question.name][question.type] = []
-                    query_tracker = query_tracking[ip_addr][question.name][question.type]
-                    track_query_interval(query_tracker, header.getts())
-                    result = test_query_interval(question.name, question.type, query_tracker)
-                    if result:
-                        # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
-                        print_issue("TIMING: Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
-
-                    if not question.name.endswith(".local") and not question.name.endswith(".arpa") and show_warnings:
-                        # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
-                        print_issue("WARNING: Multicast DNS query for a unicast-only record - Name: {}, Type: {}".format(question.name, dns_str(question.type)), eth, ip_addr)
-
-                    if question.name not in active_queries:
-                        active_queries[question.name] = {}
-                    active_queries[question.name][question.type] = header.getts()
-
-            if mdns_response:
-                if ip_addr not in response_tracking:
-                    response_tracking[ip_addr] = {"pkt_count": 1}
-                else:
-                    response_tracking[ip_addr]["pkt_count"] += 1
-                for response in mdns.an:
-                    if response.name not in active_queries:
-                        active_queries[response.name] = {}
-                    if response.type not in active_queries[response.name]:
-                        active_queries[response.name][response.type] = (0, 0)
-                    if ip_addr not in active_responses:
-                        active_responses[ip_addr] = (0, 0)
-
-                    current_ts = header.getts()
-
-                    if time.time() > INIT_TIME:
-                        if time_diff(active_queries[response.name][response.type], current_ts) > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
-                            print_issue("TIMING: Response sent when no recent query was issued - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
-
-                    if time_diff(active_queries[response.name][response.type], current_ts) < QUERY_RESPONSE_LIMIT:
-                        # A valid query has been responded to, but there may be more gratuitous records to send (for example SRV/TXT/A following a PTR)
-                        active_responses[ip_addr] = current_ts
-
-                    if response.name not in response_tracking[ip_addr]:
-                        response_tracking[ip_addr][response.name] = {}
-                    if response.type not in response_tracking[ip_addr][response.name]:
-                        response_tracking[ip_addr][response.name][response.type] = None
-                    response_tracking[ip_addr][response.name][response.type] = header.getts()
-
-                    if not response.name.endswith(".local") and not response.name.endswith(".arpa") and show_warnings:
-                        # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
-                        print_issue("WARNING: Multicast DNS response for a unicast-only record by host - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
-
-                    result = test_ttl(response.name, response.type, response.ttl)
-                    if result and show_warnings:
-                        print_issue("WARNING: Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s. This may cause unusually high query volumes.".format(response.name, DNS_TYPES[response.type], result, response.ttl), eth, ip_addr)
-
+            analyse_mdns(udp, eth, ip_addr)
         else:
             print_issue("INVALID: UDP destination port for mDNS set to '{}'".format(udp.dport), eth, ip_addr)
             record_invalid_packet(eth_addr(eth.src))
@@ -221,7 +233,7 @@ def parse_ip(header, eth, ip, show_warnings):
         print_issue("INVALID: IP protocol for mDNS set to '{}'".format(ip.p), eth, ip_addr)
         record_invalid_packet(eth_addr(eth.src))
 
-def parse_packet(header, packet, show_warnings):
+def parse_packet(header, packet):
     eth = dpkt.ethernet.Ethernet(packet)
 
     if isinstance(eth.data, dpkt.ip.IP):
@@ -240,7 +252,7 @@ def parse_packet(header, packet, show_warnings):
             record_invalid_packet(eth_addr(eth.src))
 
         try:
-            parse_ip(header, eth, ip, show_warnings)
+            parse_ip(header, eth, ip)
         except dpkt.UnpackError:
             pass
 
@@ -260,7 +272,7 @@ def parse_packet(header, packet, show_warnings):
             record_invalid_packet(eth_addr(eth.src))
 
         try:
-            parse_ip(header, eth, ip, show_warnings)
+            parse_ip(header, eth, ip)
         except dpkt.UnpackError:
             pass
 
@@ -339,6 +351,7 @@ if __name__ == "__main__":
     parser.add_argument('--file', default=None, help='path to a pcap format file containing packets to analyse')
     parser.add_argument('--suppress-warnings', action='store_true', help='ignore warnings which typically indicate a violation of a "SHOULD" aspect of the specification')
     args = parser.parse_args()
+    SHOW_WARNINGS = not args.suppress_warnings
 
     if not args.interface and not args.file:
         parser.print_usage()
@@ -377,7 +390,7 @@ if __name__ == "__main__":
                     (header, packet) = cap.next()
                     if packet:
                         packet_count += 1
-                        parse_packet(header, packet, not args.suppress_warnings)
+                        parse_packet(header, packet)
                         if not start_ts_file:
                             start_ts_file = header.getts()[0]
                         stop_ts_file = header.getts()[0]
