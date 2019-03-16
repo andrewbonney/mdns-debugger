@@ -211,8 +211,12 @@ def analyse_response(mdns, eth, ip_addr):
         current_ts = header.getts()
 
         if time.time() > INIT_TIME:
-            if time_diff(active_queries[response.name][response.type], current_ts) > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
-                log_timing("Response sent when no recent query was issued - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
+            last_query_diff = time_diff(active_queries[response.name][response.type], current_ts)
+            if last_query_diff > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
+                last_query = ""
+                if active_queries[response.name][response.type] != (0, 0):
+                    last_query = " (last query {} seconds ago)".format(last_query_diff)
+                log_timing("Response sent when no recent query was issued{} - Name: {}, Type: {}".format(last_query, response.name, dns_str(response.type)), eth, ip_addr)
 
         if time_diff(active_queries[response.name][response.type], current_ts) < QUERY_RESPONSE_LIMIT:
             # A valid query has been responded to, but there may be more gratuitous records to send (for example SRV/TXT/A following a PTR)
