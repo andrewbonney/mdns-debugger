@@ -86,7 +86,7 @@ def test_query_interval(record_name, record_type, query_tracker):
             return interval_new
         # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
         # This is based upon a standard TTL of 75 minutes and re-check at 80% of expiry period (1 hour)
-        if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
+        if record_name.endswith(".arpa") and record_type == dpkt.dns.DNS_PTR or record_type in HOSTNAME_TYPES:
             if less_than(interval_new, interval_old * 2) and less_than(interval_new, 0.8 * HOSTNAME_TTL):
                 return interval_new
         else:
@@ -95,7 +95,7 @@ def test_query_interval(record_name, record_type, query_tracker):
     return False
 
 def test_ttl(record_name, record_type, ttl):
-    if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
+    if record_name.endswith(".arpa") and record_type == dpkt.dns.DNS_PTR or record_type in HOSTNAME_TYPES:
         if ttl not in [0, HOSTNAME_TTL]:
             return HOSTNAME_TTL
     elif ttl not in [0, GENERAL_TTL]:
