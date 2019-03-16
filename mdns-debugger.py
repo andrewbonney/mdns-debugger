@@ -121,7 +121,7 @@ def parse_ip(header, eth, ip):
                 print("INVALID: mDNS responses must not contain queries '{}' '{}'".format(eth_addr(eth.src), ip_addr))
                 record_invalid_packet(eth_addr(eth.src))
 
-            if len(mdns.qd) > 0:
+            if mdns_query:
                 if ip_addr not in query_tracking:
                     query_tracking[ip_addr] = {"pkt_count": 1}
                 else:
@@ -146,7 +146,7 @@ def parse_ip(header, eth, ip):
                         active_queries[question.name] = {}
                     active_queries[question.name][question.type] = header.getts()
 
-            if len(mdns.an) > 0:
+            if mdns_response:
                 if ip_addr not in response_tracking:
                     response_tracking[ip_addr] = {"pkt_count": 1}
                 else:
