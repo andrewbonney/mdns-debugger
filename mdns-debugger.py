@@ -26,7 +26,18 @@ ip6_maps = {}
 IP4_MULTICAST_GROUP = '224.0.0.251'
 IP6_MULTICAST_GROUP = 'ff02::fb'
 
-DNS_TYPES = {1: "A", 12: "PTR", 16: "TXT", 28: "AAAA", 33: "SRV"}
+DNS_TYPES = {dpkt.dns.DNS_A: "A",
+             dpkt.dns.DNS_NS: "NS",
+             dpkt.dns.DNS_CNAME: "CNAME",
+             dpkt.dns.DNS_SOA: "SOA",
+             dpkt.dns.DNS_NULL: "NULL",
+             dpkt.dns.DNS_PTR: "PTR",
+             dpkt.dns.DNS_HINFO: "HINFO",
+             dpkt.dns.DNS_MX: "MX",
+             dpkt.dns.DNS_TXT: "TXT",
+             dpkt.dns.DNS_AAAA: "AAAA",
+             dpkt.dns.DNS_SRV: "SRV",
+             dpkt.dns.DNS_OPT: "OPT"}
 
 # Time to wait before issuing warnings
 INIT_TIME = time.time() + 2
@@ -36,6 +47,9 @@ QUERY_RESPONSE_LIMIT = 2
 
 # How long after sending a response may a server send additional related response packets for
 GRATUITOUS_RESPONSE_LIMIT = 2
+
+GENERAL_TTL = 75*60
+HOSTNAME_TTL = 120
 
 def dns_str(dns_type):
     try:
@@ -68,6 +82,17 @@ def test_query_interval(query_tracker):
         # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
         if interval_new < interval_old * 2 and interval_new < 3600:
             return interval_new
+    return False
+
+def test_ttl(record_name, record_type, ttl):
+    if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR:
+        if ttl not in [0, HOSTNAME_TTL]:
+            return HOSTNAME_TTL
+    elif record_type in [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV]:
+        if ttl not in [0, HOSTNAME_TTL]:
+            return HOSTNAME_TTL
+    elif ttl not in [0, GENERAL_TTL]:
+        return GENERAL_TTL
     return False
 
 def bytes_to_int(bytes):
@@ -145,6 +170,10 @@ def parse_ip(header, eth, ip):
                     if question.name not in active_queries:
                         active_queries[question.name] = {}
                     active_queries[question.name][question.type] = header.getts()
+                for known_answer in mdns.an:
+                    result = test_ttl(known_answer.name, known_answer.type, known_answer.ttl)
+                    if result:
+                        print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s.".format(DNS_TYPES[known_answer.type], result, known_answer.ttl))
 
             if mdns_response:
                 if ip_addr not in response_tracking:
@@ -178,6 +207,10 @@ def parse_ip(header, eth, ip):
                     if not response.name.endswith(".local") and not response.name.endswith(".arpa"):
                         # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
                         print("WARNING: Multicast DNS response for a unicast-only record by host '{}' '{}' - Name: {}, Type: {}".format(eth_addr(eth.src), ip_addr, response.name, dns_str(response.type)))
+
+                    result = test_ttl(response.name, response.type, response.ttl)
+                    if result:
+                        print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s.".format(DNS_TYPES[response.type], result, response.ttl))
 
         else:
             print("INVALID: UDP destination port for mDNS set to '{}' by host '{}' '{}'".format(udp.dport, eth_addr(eth.src), ip_addr))
