@@ -12,6 +12,10 @@ import argparse
 
 from colorama import Fore, Style
 
+# TODO: Detect when a host sends a query soon after another host has issued a query
+# This is a little tricky to detect as this is only bad behaviour if the second host
+# includes the same known answers in its query
+
 query_tracking = {}
 response_tracking = {}
 active_queries = {}
