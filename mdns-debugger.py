@@ -11,10 +11,6 @@ import argparse
 
 from colorama import Fore, Style
 
-#TODO: Ideally avoid flagging items as bad if they consitute a device restarting or similar and re-querying as a result
-#TODO: When flagging high traffic rates, don't average over the whole run time, but over successive periods of 60s or so
-#TODO: Don't flag timing issues if the backoff interval has just been reset, potentially due to an expired TTL
-
 query_tracking = {}
 response_tracking = {}
 active_queries = {}
@@ -50,6 +46,7 @@ GRATUITOUS_RESPONSE_LIMIT = 2
 
 GENERAL_TTL = 75*60
 HOSTNAME_TTL = 120
+HOSTNAME_TYPES = [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV]
 
 def dns_str(dns_type):
     try:
@@ -68,7 +65,7 @@ def track_query_interval(query_tracker, packet_time):
     while len(query_tracker) > 3:
         query_tracker.pop(0)
 
-def test_query_interval(query_tracker):
+def test_query_interval(record_name, record_type, query_tracker):
     if len(query_tracker) < 2:
         return False
     if len(query_tracker) == 2:
@@ -80,15 +77,17 @@ def test_query_interval(query_tracker):
         if interval_old < 1 or interval_new < 1:
             return min(interval_old, interval_new)
         # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
-        if interval_new < interval_old * 2 and interval_new < 3600:
-            return interval_new
+        # This is based upon a standard TTL of 75 minutes and re-check at 80% of expiry period (1 hour)
+        if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
+            if interval_new < interval_old * 2 and interval_new < (0.8 * HOSTNAME_TTL):
+                return interval_new
+        else:
+            if interval_new < interval_old * 2 and interval_new < (0.8 * GENERAL_TTL):
+                return interval_new
     return False
 
 def test_ttl(record_name, record_type, ttl):
-    if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR:
-        if ttl not in [0, HOSTNAME_TTL]:
-            return HOSTNAME_TTL
-    elif record_type in [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV]:
+    if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
         if ttl not in [0, HOSTNAME_TTL]:
             return HOSTNAME_TTL
     elif ttl not in [0, GENERAL_TTL]:
@@ -161,10 +160,10 @@ def parse_ip(header, eth, ip, show_warnings):
                         query_tracking[ip_addr][question.name][question.type] = []
                     query_tracker = query_tracking[ip_addr][question.name][question.type]
                     track_query_interval(query_tracker, header.getts())
-                    result = test_query_interval(query_tracker)
+                    result = test_query_interval(question.name, question.type, query_tracker)
                     if result:
                         # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
-                        print("TIMING: Repeated query issued too quickly (interval {} seconds) by host '{}' '{}' - Name: {}, Type: {}".format(result, eth_addr(eth.src), ip_addr, question.name, dns_str(question.type)))
+                        print("TIMING: Repeated query issued too quickly (interval {} seconds) by host '{}' '{}' - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, eth_addr(eth.src), ip_addr, question.name, dns_str(question.type)))
 
                     if not question.name.endswith(".local") and not question.name.endswith(".arpa") and show_warnings:
                         # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
@@ -213,7 +212,7 @@ def parse_ip(header, eth, ip, show_warnings):
 
                     result = test_ttl(response.name, response.type, response.ttl)
                     if result and show_warnings:
-                        print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s.".format(DNS_TYPES[response.type], result, response.ttl))
+                        print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s. This may cause unusually high query volumes.".format(DNS_TYPES[response.type], result, response.ttl))
 
         else:
             print("INVALID: UDP destination port for mDNS set to '{}' by host '{}' '{}'".format(udp.dport, eth_addr(eth.src), ip_addr))
