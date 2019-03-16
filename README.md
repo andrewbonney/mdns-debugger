@@ -21,13 +21,13 @@ $ pip3 install -r requirements.txt
 Live capture and analysis from a selected network interface:
 
 ```shell
-$ python3 mdns-debugger.py --interface <ifname> [--suppress-warnings]
+$ python3 mdns-debugger.py --interface <ifname> [--suppress-warnings --suppress-timing]
 ```
 
 Offline pcap file analysis:
 
 ```shell
-$ python3 mdns-debugger.py --file <filename.pcap> [--suppress-warnings]
+$ python3 mdns-debugger.py --file <filename.pcap> [--suppress-warnings --suppress-timing]
 ```
 
 In both modes of operation packet errors and timing issues are flagged. Once analysis is complete a summary of packet rates and error counts is displayed (after a CTRL+C when in live mode).

@@ -51,6 +51,7 @@ HOSTNAME_TYPES = [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dn
 
 # Whether to show warnings or not, as set via command line argument
 SHOW_WARNINGS = True
+SHOW_TIMING = True
 
 def dns_str(dns_type):
     try:
@@ -167,7 +168,7 @@ def analyse_query(mdns, eth, ip_addr):
         query_tracker = query_tracking[ip_addr][question.name][question.type]
         track_query_interval(query_tracker, header.getts())
         result = test_query_interval(question.name, question.type, query_tracker)
-        if result is not False:
+        if result is not False and SHOW_TIMING:
             # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
             print_issue("TIMING: Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
 
@@ -194,7 +195,7 @@ def analyse_response(mdns, eth, ip_addr):
 
         current_ts = header.getts()
 
-        if time.time() > INIT_TIME:
+        if time.time() > INIT_TIME and SHOW_TIMING:
             if time_diff(active_queries[response.name][response.type], current_ts) > QUERY_RESPONSE_LIMIT and time_diff(active_responses[ip_addr], current_ts) > GRATUITOUS_RESPONSE_LIMIT:
                 print_issue("TIMING: Response sent when no recent query was issued - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
 
@@ -353,8 +354,10 @@ if __name__ == "__main__":
     parser.add_argument('--interface', default=None, help='name of a network interface to perform a live capture from')
     parser.add_argument('--file', default=None, help='path to a pcap format file containing packets to analyse')
     parser.add_argument('--suppress-warnings', action='store_true', help='ignore warnings which typically indicate a violation of a "SHOULD" aspect of the specification')
+    parser.add_argument('--suppress-timing', action='store_true', help='ignore timing errors such as repeated or periodic queries and responses')
     args = parser.parse_args()
     SHOW_WARNINGS = not args.suppress_warnings
+    SHOW_TIMING = not args.suppress_timing
 
     if not args.interface and not args.file:
         parser.print_usage()
