@@ -62,7 +62,7 @@ def eth_addr(address):
     return "%02x:%02x:%02x:%02x:%02x:%02x" % struct.unpack("BBBBBB", address)
 
 def time_diff(time_old, time_new):
-    return time_new[0] - time_old[0]
+    return round((time_new[0] + time_new[1] / 1000000) - (time_old[0] + time_old[1] / 1000000), 3)
 
 def track_query_interval(query_tracker, packet_time):
     query_tracker.append(packet_time)
@@ -81,8 +81,8 @@ def test_query_interval(record_name, record_type, query_tracker):
     else:
         interval_old = time_diff(query_tracker[0], query_tracker[1])
         interval_new = time_diff(query_tracker[1], query_tracker[2])
-        if less_than(interval_old, 1) or less_than(interval_new, 1):
-            return min(interval_old, interval_new)
+        if less_than(interval_new, 1):
+            return interval_new
         # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
         # This is based upon a standard TTL of 75 minutes and re-check at 80% of expiry period (1 hour)
         if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
@@ -167,7 +167,7 @@ def analyse_query(mdns, eth, ip_addr):
         query_tracker = query_tracking[ip_addr][question.name][question.type]
         track_query_interval(query_tracker, header.getts())
         result = test_query_interval(question.name, question.type, query_tracker)
-        if result:
+        if result is not False:
             # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
             print_issue("TIMING: Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
 
@@ -213,7 +213,7 @@ def analyse_response(mdns, eth, ip_addr):
             print_issue("WARNING: Multicast DNS response for a unicast-only record by host - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
 
         result = test_ttl(response.name, response.type, response.ttl)
-        if result and SHOW_WARNINGS:
+        if result is not False and SHOW_WARNINGS:
             print_issue("WARNING: Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s. This may cause unusually high query volumes.".format(response.name, DNS_TYPES[response.type], result, response.ttl), eth, ip_addr)
 
 def parse_ip(header, eth, ip):
