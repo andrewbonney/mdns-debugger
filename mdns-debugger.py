@@ -44,7 +44,7 @@ def dns_str(dns_type):
         return str(dns_type)
 
 def eth_addr(address):
-    return ':'.join('%02x' % ord(b) for b in address)
+    return "%02x:%02x:%02x:%02x:%02x:%02x" % struct.unpack("BBBBBB", address)
 
 def time_diff(time_old, time_new):
     return time_new[0] - time_old[0]
@@ -71,7 +71,7 @@ def test_query_interval(query_tracker):
     return False
 
 def bytes_to_int(bytes):
-    return int(bytes.encode("hex"), 16)
+    return int(struct.unpack('>H', bytes)[0])
 
 def record_invalid_packet(eth_addr, ip_addr=None):
     if eth_addr not in invalid_packets:
@@ -276,10 +276,15 @@ def print_report(packet_count, duration):
 
 def create_mreqs():
     v4_group = socket.inet_pton(socket.AF_INET, IP4_MULTICAST_GROUP)
-    v4_mreq = struct.pack('4sL', v4_group, socket.INADDR_ANY)
+    v4_if = socket.INADDR_ANY
+    v4_mreq = struct.pack('4sL', v4_group, v4_if)
 
     v6_group = socket.inet_pton(socket.AF_INET6, IP6_MULTICAST_GROUP)
-    v6_mreq = struct.pack("16s16s", v6_group, chr(0)*16)
+    v6_if = chr(0)*16
+    try:
+        v6_mreq = struct.pack("16s16s", v6_group, v6_if)
+    except struct.error:
+        v6_mreq = struct.pack("16s16s", v6_group, bytearray(v6_if, "utf-8"))
 
     return v4_mreq, v6_mreq
 
