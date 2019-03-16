@@ -119,8 +119,8 @@ def parse_ip(header, eth, ip):
             mdns = dpkt.dns.DNS(udp.data)
             mdns_query = False
             mdns_response = False
-            if bytes_to_int(udp.data[0:2]) & 0xFFFF == 0x0000:
-                pass # Nothing gets this right, so no point flooding the reporting!
+            if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000:
+                print("WARNING: Query identifier not set to zero for a fully compliant multicast DNS message")
             if bytes_to_int(udp.data[2:4]) & 0x8000 == 0x0000:
                 mdns_query = True
             elif bytes_to_int(udp.data[2:4]) & 0x8000 == 0x8000:
