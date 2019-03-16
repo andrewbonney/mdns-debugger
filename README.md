@@ -34,6 +34,6 @@ In both modes of operation packet errors and timing issues are flagged. Once ana
 
 ### Avoiding False Positives
 
-The mDNS specification permits implementations to (amongst other things) send gratuitous responses upon initial advertisement. This may be incorrectly flagged as an error by this tool. As such it is recommended that this tool is only used to analyse implementations in their 'steady state' when no reboots or user input is occurring.
+The mDNS specification permits implementations to (amongst other things) send gratuitous responses upon initial advertisement. This may be incorrectly flagged as an error by this tool. As such it is recommended that this tool is only used to analyse implementations in their 'steady state' when no reboots or user input are occurring.
 
-Query timing checks assume that the TTLs required by the mDNS RFC are being followed. If they are not, implementations may quite correctly send queries more frequently than expected. The tool will indicate when unexpected TTLs are encountered provided warnings are not being suppressed.
+Query timing checks assume that the TTLs required by the mDNS RFC are being followed. If they are not, implementations may quite correctly send queries more frequently than expected. This tool will indicate when unexpected TTLs are encountered in responses, provided warnings are not being suppressed. The response TTL errors should be resolved before pursuing the potential querier issues.
