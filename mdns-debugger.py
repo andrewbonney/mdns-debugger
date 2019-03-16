@@ -104,7 +104,7 @@ def record_invalid_packet(eth_addr, ip_addr=None):
     else:
         invalid_packets[eth_addr] += 1
 
-def parse_ip(header, eth, ip):
+def parse_ip(header, eth, ip, show_warnings):
     ip_data = ip.data
 
     ip_addr = None
@@ -119,16 +119,19 @@ def parse_ip(header, eth, ip):
             mdns = dpkt.dns.DNS(udp.data)
             mdns_query = False
             mdns_response = False
-            if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000:
+            if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000 and show_warnings:
                 print("WARNING: Query identifier not set to zero for a fully compliant multicast DNS message")
             if bytes_to_int(udp.data[2:4]) & 0x8000 == 0x0000:
                 mdns_query = True
             elif bytes_to_int(udp.data[2:4]) & 0x8000 == 0x8000:
                 mdns_response = True
 
+            if mdns_query and mdns_response:
+                print("ERROR: Message indicates that it is both a query and a response")
+
             if udp.sport != 5353:
                 # See https://tools.ietf.org/html/rfc6762#section-5.1. The UDP source port of 5353
-                if mdns_query:
+                if mdns_query and show_warnings:
                     print("WARNING: Querying host is using one-shot queries with a source port of 5353 and is not fully compliant with mDNS '{}' '{}'".format(eth_addr(eth.src), ip_addr))
                 elif mdns_response:
                     print("INVALID: Responding host is using one-shot responses with a source port of 5353 and is not compliant with mDNS '{}' '{}'".format(eth_addr(eth.src), ip_addr))
@@ -163,7 +166,7 @@ def parse_ip(header, eth, ip):
                         # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
                         print("TIMING: Repeated query issued too quickly (interval {} seconds) by host '{}' '{}' - Name: {}, Type: {}".format(result, eth_addr(eth.src), ip_addr, question.name, dns_str(question.type)))
 
-                    if not question.name.endswith(".local") and not question.name.endswith(".arpa"):
+                    if not question.name.endswith(".local") and not question.name.endswith(".arpa") and show_warnings:
                         # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
                         print("WARNING: Multicast DNS query for a unicast-only record by host '{}' '{}' - Name: {}, Type: {}".format(eth_addr(eth.src), ip_addr, question.name, dns_str(question.type)))
 
@@ -172,7 +175,7 @@ def parse_ip(header, eth, ip):
                     active_queries[question.name][question.type] = header.getts()
                 for known_answer in mdns.an:
                     result = test_ttl(known_answer.name, known_answer.type, known_answer.ttl)
-                    if result:
+                    if result and show_warnings:
                         print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s.".format(DNS_TYPES[known_answer.type], result, known_answer.ttl))
 
             if mdns_response:
@@ -204,12 +207,12 @@ def parse_ip(header, eth, ip):
                         response_tracking[ip_addr][response.name][response.type] = None
                     response_tracking[ip_addr][response.name][response.type] = header.getts()
 
-                    if not response.name.endswith(".local") and not response.name.endswith(".arpa"):
+                    if not response.name.endswith(".local") and not response.name.endswith(".arpa") and show_warnings:
                         # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
                         print("WARNING: Multicast DNS response for a unicast-only record by host '{}' '{}' - Name: {}, Type: {}".format(eth_addr(eth.src), ip_addr, response.name, dns_str(response.type)))
 
                     result = test_ttl(response.name, response.type, response.ttl)
-                    if result:
+                    if result and show_warnings:
                         print("WARNING: Non-standard TTL used for {} record. Expected {}s, found {}s.".format(DNS_TYPES[response.type], result, response.ttl))
 
         else:
@@ -219,7 +222,7 @@ def parse_ip(header, eth, ip):
         print("INVALID: IP protocol for mDNS set to '{}' by host '{}' '{}'".format(ip.p, eth_addr(eth.src), ip_addr))
         record_invalid_packet(eth_addr(eth.src))
 
-def parse_packet(header, packet):
+def parse_packet(header, packet, show_warnings):
     eth = dpkt.ethernet.Ethernet(packet)
 
     if isinstance(eth.data, dpkt.ip.IP):
@@ -238,7 +241,7 @@ def parse_packet(header, packet):
             record_invalid_packet(eth_addr(eth.src))
 
         try:
-            parse_ip(header, eth, ip)
+            parse_ip(header, eth, ip, show_warnings)
         except dpkt.UnpackError:
             pass
 
@@ -258,7 +261,7 @@ def parse_packet(header, packet):
             record_invalid_packet(eth_addr(eth.src))
 
         try:
-            parse_ip(header, eth, ip)
+            parse_ip(header, eth, ip, show_warnings)
         except dpkt.UnpackError:
             pass
 
@@ -335,6 +338,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='mDNS debugger')
     parser.add_argument('--interface', default=None, help='name of a network interface to perform a live capture from')
     parser.add_argument('--file', default=None, help='path to a pcap format file containing packets to analyse')
+    parser.add_argument('--suppress-warnings', action='store_true', help='ignore warnings which typically indicate a violation of a "SHOULD" aspect of the specification')
     args = parser.parse_args()
 
     if not args.interface and not args.file:
@@ -374,7 +378,7 @@ if __name__ == "__main__":
                     (header, packet) = cap.next()
                     if packet:
                         packet_count += 1
-                        parse_packet(header, packet)
+                        parse_packet(header, packet, not args.suppress_warnings)
                         if not start_ts_file:
                             start_ts_file = header.getts()[0]
                         stop_ts_file = header.getts()[0]
