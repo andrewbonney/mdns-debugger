@@ -31,3 +31,7 @@ $ python3 mdns-debugger.py --file <filename.pcap>
 ```
 
 In both modes of operation packet errors and timing issues are flagged. Once analysis is complete a summary of packet rates and error counts is displayed (after a CTRL+C when in live mode).
+
+### Avoiding False Positives
+
+The mDNS specification permits implementations to (amongst other things) send gratuitous responses upon initial advertisement. This may be incorrectly flagged as an error by this tool. As such it is recommended that this tool is only used to analyse implementations in their 'steady state' when no reboots or user input is occurring.
