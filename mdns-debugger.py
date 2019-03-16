@@ -69,24 +69,27 @@ def track_query_interval(query_tracker, packet_time):
     while len(query_tracker) > 3:
         query_tracker.pop(0)
 
+def less_than(comp1, comp2):
+    return round(comp1) < round(comp2)
+
 def test_query_interval(record_name, record_type, query_tracker):
     if len(query_tracker) < 2:
         return False
     if len(query_tracker) == 2:
-        if time_diff(query_tracker[0], query_tracker[1]) < 1:
+        if less_than(time_diff(query_tracker[0], query_tracker[1]), 1):
             return time_diff(query_tracker[0], query_tracker[1])
     else:
         interval_old = time_diff(query_tracker[0], query_tracker[1])
         interval_new = time_diff(query_tracker[1], query_tracker[2])
-        if interval_old < 1 or interval_new < 1:
+        if less_than(interval_old, 1) or less_than(interval_new, 1):
             return min(interval_old, interval_new)
         # Re-query intervals are permitted to top out at one hour https://tools.ietf.org/html/rfc6762#section-5.2 para 3
         # This is based upon a standard TTL of 75 minutes and re-check at 80% of expiry period (1 hour)
         if record_name.endswith(".arpa") and record_type == dpkt.dns.PTR or record_type in HOSTNAME_TYPES:
-            if interval_new < interval_old * 2 and interval_new < (0.8 * HOSTNAME_TTL):
+            if less_than(interval_new, interval_old * 2) and less_than(interval_new, 0.8 * HOSTNAME_TTL):
                 return interval_new
         else:
-            if interval_new < interval_old * 2 and interval_new < (0.8 * GENERAL_TTL):
+            if less_than(interval_new, interval_old * 2) and less_than(interval_new, 0.8 * GENERAL_TTL):
                 return interval_new
     return False
 
