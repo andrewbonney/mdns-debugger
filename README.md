@@ -6,9 +6,9 @@ This application captures all traffic sent to the relevant IPv4 and IPv6 multica
 
 ## Requirements
 
-* Linux (untested on Windows and Mac)
-* Python 2 or 3
-* Pip
+*   Linux (untested on Windows and Mac)
+*   Python 2 or 3
+*   Pip
 
 ## Installation
 
