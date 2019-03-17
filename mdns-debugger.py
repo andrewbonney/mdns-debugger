@@ -116,65 +116,65 @@ def record_invalid_packet(eth_addr, ip_addr=None):
     else:
         invalid_packets[eth_addr] += 1
 
-def log_invalid(msg, eth=None, ip_addr=None):
-    log("INVALID: {}".format(msg), eth, ip_addr)
+def log_invalid(pkt_time, msg, eth=None, ip_addr=None):
+    log(pkt_time, "INVALID: {}".format(msg), eth, ip_addr)
     if eth:
         record_invalid_packet(eth_addr(eth.src))
 
-def log_error(msg, eth=None, ip_addr=None):
-    log("ERROR: {}".format(msg), eth, ip_addr)
+def log_error(pkt_time, msg, eth=None, ip_addr=None):
+    log(pkt_time, "ERROR: {}".format(msg), eth, ip_addr)
 
-def log_warning(msg, eth=None, ip_addr=None):
+def log_warning(pkt_time, msg, eth=None, ip_addr=None):
     if SHOW_WARNINGS:
-        log("WARNING: {}".format(msg), eth, ip_addr)
+        log(pkt_time, "WARNING: {}".format(msg), eth, ip_addr)
 
-def log_timing(msg, eth=None, ip_addr=None):
+def log_timing(pkt_time, msg, eth=None, ip_addr=None):
     if SHOW_TIMING:
-        log("TIMING: {}".format(msg), eth, ip_addr)
+        log(pkt_time, "TIMING: {}".format(msg), eth, ip_addr)
 
-def log(msg, eth=None, ip_addr=None):
-    current_time = datetime.datetime.now().time()
+def log(pkt_time, msg, eth=None, ip_addr=None):
+    current_time = (datetime.datetime(1970, 1, 1) + datetime.timedelta(0, pkt_time[0], pkt_time[1])).time()
     print("{} {}".format(current_time.isoformat(), msg))
     if eth and ip_addr:
         print("{} -> Src MAC: {}, Src IP: {}".format(current_time.isoformat(), eth_addr(eth.src), ip_addr))
 
-def analyse_mdns(udp, eth, ip_addr):
+def analyse_mdns(header, udp, eth, ip_addr):
     mdns = dpkt.dns.DNS(udp.data)
     mdns_query = False
     mdns_response = False
     if udp.sport == 5353 and bytes_to_int(udp.data[0:2]) & 0xFFFF != 0x0000:
-        log_warning("Query identifier not set to zero for a fully compliant multicast DNS message", eth, ip_addr)
+        log_warning(header.getts(), "Query identifier not set to zero for a fully compliant multicast DNS message", eth, ip_addr)
     if bytes_to_int(udp.data[2:4]) & 0x8000 == 0x0000:
         mdns_query = True
     elif bytes_to_int(udp.data[2:4]) & 0x8000 == 0x8000:
         mdns_response = True
 
     if mdns_query and mdns_response:
-        log_error("Message indicates that it is both a query and a response", eth, ip_addr)
+        log_error(header.getts(), "Message indicates that it is both a query and a response", eth, ip_addr)
 
     if udp.sport != 5353:
         # See https://tools.ietf.org/html/rfc6762#section-5.1. The UDP source port of 5353
         if mdns_query:
-            log_warning("Querying host is using one-shot queries with a source port of 5353 and is not fully compliant with mDNS", eth, ip_addr)
+            log_warning(header.getts(), "Querying host is using one-shot queries with a source port of 5353 and is not fully compliant with mDNS", eth, ip_addr)
         elif mdns_response:
-            log_invalid("Responding host is using one-shot responses with a source port of 5353 and is not compliant with mDNS", eth, ip_addr)
+            log_invalid(header.getts(), "Responding host is using one-shot responses with a source port of 5353 and is not compliant with mDNS", eth, ip_addr)
 
     if len(mdns.qd) == 0 and mdns_query:
-        log_invalid("mDNS query sent without any questions", eth, ip_addr)
+        log_invalid(header.getts(), "mDNS query sent without any questions", eth, ip_addr)
     if len(mdns.an) == 0 and mdns_response:
-        log_invalid("mDNS response sent without any responses", eth, ip_addr)
+        log_invalid(header.getts(), "mDNS response sent without any responses", eth, ip_addr)
 
     if mdns_response and len(mdns.qd) > 0:
         # See https://tools.ietf.org/html/rfc6762#section-6 and https://tools.ietf.org/html/rfc6762#section-7.1
-        log_invalid("mDNS responses must not contain queries", eth, ip_addr)
+        log_invalid(header.getts(), "mDNS responses must not contain queries", eth, ip_addr)
 
     if mdns_query:
-        analyse_query(mdns, eth, ip_addr)
+        analyse_query(header, mdns, eth, ip_addr)
 
     if mdns_response:
-        analyse_response(mdns, eth, ip_addr)
+        analyse_response(header, mdns, eth, ip_addr)
 
-def analyse_query(mdns, eth, ip_addr):
+def analyse_query(header, mdns, eth, ip_addr):
     if ip_addr not in query_tracking:
         query_tracking[ip_addr] = {"pkt_count": 1}
     else:
@@ -189,17 +189,17 @@ def analyse_query(mdns, eth, ip_addr):
         result = test_query_interval(question.name, question.type, query_tracker)
         if result is not False:
             # Successive queries must be at least a second apart, then increase by a factor of two as-per para 3 of https://tools.ietf.org/html/rfc6762#section-5.2
-            log_timing("Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
+            log_timing(header.getts(), "Repeated query issued too quickly (interval {} seconds) - Name: {}, Type: {}. This may be due to incorrect TTLs in one or more responses".format(result, question.name, dns_str(question.type)), eth, ip_addr)
 
         if not question.name.endswith(".local") and not question.name.endswith(".arpa"):
             # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
-            log_warning("Multicast DNS query for a unicast-only record - Name: {}, Type: {}".format(question.name, dns_str(question.type)), eth, ip_addr)
+            log_warning(header.getts(), "Multicast DNS query for a unicast-only record - Name: {}, Type: {}".format(question.name, dns_str(question.type)), eth, ip_addr)
 
         if question.name not in active_queries:
             active_queries[question.name] = {}
         active_queries[question.name][question.type] = header.getts()
 
-def analyse_response(mdns, eth, ip_addr):
+def analyse_response(header, mdns, eth, ip_addr):
     if ip_addr not in response_tracking:
         response_tracking[ip_addr] = {"pkt_count": 1}
     else:
@@ -220,7 +220,7 @@ def analyse_response(mdns, eth, ip_addr):
                 last_query = ""
                 if active_queries[response.name][response.type] != (0, 0):
                     last_query = " (last query {} seconds ago)".format(last_query_diff)
-                log_timing("Response sent when no recent query was issued{} - Name: {}, Type: {}".format(last_query, response.name, dns_str(response.type)), eth, ip_addr)
+                log_timing(header.getts(), "Response sent when no recent query was issued{} - Name: {}, Type: {}".format(last_query, response.name, dns_str(response.type)), eth, ip_addr)
 
         if time_diff(active_queries[response.name][response.type], current_ts) < QUERY_RESPONSE_LIMIT:
             # A valid query has been responded to, but there may be more gratuitous records to send (for example SRV/TXT/A following a PTR)
@@ -234,14 +234,14 @@ def analyse_response(mdns, eth, ip_addr):
 
         if not response.name.endswith(".local") and not response.name.endswith(".arpa"):
             # Permitted but unusual: https://tools.ietf.org/html/rfc6762#section-3 and https://tools.ietf.org/html/rfc6762#section-4
-            log_warning("Multicast DNS response for a unicast-only record by host - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
+            log_warning(header.getts(), "Multicast DNS response for a unicast-only record by host - Name: {}, Type: {}".format(response.name, dns_str(response.type)), eth, ip_addr)
 
         result = test_ttl(response.name, response.type, response.ttl)
         if result is not False:
             extra_msg = ""
             if response.ttl < result:
                 extra_msg = " This may cause unusually high query volumes."
-            log_warning("Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s.{}".format(response.name, DNS_TYPES[response.type], result, response.ttl, extra_msg), eth, ip_addr)
+            log_warning(header.getts(), "Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s.{}".format(response.name, DNS_TYPES[response.type], result, response.ttl, extra_msg), eth, ip_addr)
 
 def parse_ip(header, eth, ip):
     ip_data = ip.data
@@ -255,18 +255,18 @@ def parse_ip(header, eth, ip):
     if isinstance(ip_data, dpkt.udp.UDP):
         udp = ip_data
         if udp.dport == 5353:
-            analyse_mdns(udp, eth, ip_addr)
+            analyse_mdns(header, udp, eth, ip_addr)
         else:
-            log_invalid("UDP destination port for mDNS set to '{}'".format(udp.dport), eth, ip_addr)
+            log_invalid(header.getts(), "UDP destination port for mDNS set to '{}'".format(udp.dport), eth, ip_addr)
     else:
-        log_invalid("IP protocol for mDNS set to '{}'".format(ip.p), eth, ip_addr)
+        log_invalid(header.getts(), "IP protocol for mDNS set to '{}'".format(ip.p), eth, ip_addr)
 
 def parse_packet(header, packet):
     eth = dpkt.ethernet.Ethernet(packet)
 
     if isinstance(eth.data, dpkt.ip.IP):
         if eth_addr(eth.dst) != "01:00:5e:00:00:fb":
-            log_invalid("Destination MAC for IPv4 mDNS set to '{}' by '{}'".format(eth_addr(eth.dst), eth_addr(eth.src)), eth)
+            log_invalid(header.getts(), "Destination MAC for IPv4 mDNS set to '{}' by '{}'".format(eth_addr(eth.dst), eth_addr(eth.src)), eth)
 
         ip = eth.data
         dst_addr = socket.inet_ntop(socket.AF_INET, ip.dst)
@@ -275,7 +275,7 @@ def parse_packet(header, packet):
             ip4_maps[eth_addr(eth.src)] = src_addr
 
         if dst_addr != "224.0.0.251":
-            log_invalid("Destination IP address for IPv4 mDNS set to '{}' by '{}' '{}'".format(dst_addr, eth_addr(eth.src), src_addr), eth)
+            log_invalid(header.getts(), "Destination IP address for IPv4 mDNS set to '{}' by '{}' '{}'".format(dst_addr, eth_addr(eth.src), src_addr), eth)
 
         try:
             parse_ip(header, eth, ip)
@@ -284,7 +284,7 @@ def parse_packet(header, packet):
 
     elif isinstance(eth.data, dpkt.ip6.IP6):
         if eth_addr(eth.dst) != "33:33:00:00:00:fb":
-            log_invalid("Destination MAC for IPv6 mDNS set to '{}' by '{}'".format(eth_addr(eth.dst), eth_addr(eth.src)), eth)
+            log_invalid(header.getts(), "Destination MAC for IPv6 mDNS set to '{}' by '{}'".format(eth_addr(eth.dst), eth_addr(eth.src)), eth)
 
         ip = eth.data
         dst_addr = socket.inet_ntop(socket.AF_INET6, ip.dst)
@@ -293,7 +293,7 @@ def parse_packet(header, packet):
             ip6_maps[eth_addr(eth.src)] = src_addr
 
         if dst_addr != "ff02::fb":
-            log_invalid("Destination IP address for IPv6 mDNS set to '{}' by '{}' '{}'".format(dst_addr, eth_addr(eth.src), src_addr), eth)
+            log_invalid(header.getts(), "Destination IP address for IPv6 mDNS set to '{}' by '{}' '{}'".format(dst_addr, eth_addr(eth.src), src_addr), eth)
 
         try:
             parse_ip(header, eth, ip)
@@ -301,7 +301,7 @@ def parse_packet(header, packet):
             pass
 
     else:
-        log_invalid("Ethernet protocol for mDNS set to '{}' by '{}'".format(eth.type, eth_addr(eth.src)), eth)
+        log_invalid(header.getts(), "Ethernet protocol for mDNS set to '{}' by '{}'".format(eth.type, eth_addr(eth.src)), eth)
 
 def print_report(packet_count, duration):
     print("\n---- SUMMARY ----")
