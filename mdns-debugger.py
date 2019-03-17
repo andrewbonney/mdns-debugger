@@ -68,7 +68,7 @@ def eth_addr(address):
     return "%02x:%02x:%02x:%02x:%02x:%02x" % struct.unpack("BBBBBB", address)
 
 def time_diff(time_old, time_new):
-    return round((time_new[0] + time_new[1] / 1000000) - (time_old[0] + time_old[1] / 1000000), 3)
+    return round((datetime.timedelta(0, time_new[0], time_new[1]) - datetime.timedelta(0, time_old[0], time_old[1])).total_seconds(), 3)
 
 def track_query_interval(query_tracker, packet_time):
     query_tracker.append(packet_time)
