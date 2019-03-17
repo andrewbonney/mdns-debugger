@@ -238,7 +238,10 @@ def analyse_response(mdns, eth, ip_addr):
 
         result = test_ttl(response.name, response.type, response.ttl)
         if result is not False:
-            log_warning("Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s. This may cause unusually high query volumes.".format(response.name, DNS_TYPES[response.type], result, response.ttl), eth, ip_addr)
+            extra_msg = ""
+            if response.ttl < result:
+                extra_msg = " This may cause unusually high query volumes."
+            log_warning("Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s.{}".format(response.name, DNS_TYPES[response.type], result, response.ttl, extra_msg), eth, ip_addr)
 
 def parse_ip(header, eth, ip):
     ip_data = ip.data
