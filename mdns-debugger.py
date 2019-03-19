@@ -39,7 +39,8 @@ DNS_TYPES = {dpkt.dns.DNS_A: "A",
              dpkt.dns.DNS_TXT: "TXT",
              dpkt.dns.DNS_AAAA: "AAAA",
              dpkt.dns.DNS_SRV: "SRV",
-             dpkt.dns.DNS_OPT: "OPT"}
+             dpkt.dns.DNS_OPT: "OPT",
+             47: "NSEC"}
 
 # Time to wait before issuing warnings
 INIT_TIME = time.time() + 2
@@ -53,7 +54,7 @@ GRATUITOUS_RESPONSE_LIMIT = 2
 # TTLs and requirements defined in the RFC
 GENERAL_TTL = 75*60
 HOSTNAME_TTL = 120
-HOSTNAME_TYPES = [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV]
+HOSTNAME_TYPES = [dpkt.dns.DNS_A, dpkt.dns.DNS_AAAA, dpkt.dns.DNS_HINFO, dpkt.dns.DNS_SRV, 47]
 
 # Whether to show warnings or not, as set via command line argument
 SHOW_WARNINGS = True
@@ -274,7 +275,7 @@ def analyse_response(header, mdns, eth, ip_addr):
             if response.ttl < result:
                 extra_msg = " This may cause unusually high query volumes."
             log_warning(header.getts(), "Non-standard TTL used - Name: {}, Type: {}. Expected {}s, found {}s.{}"
-                                        .format(response.name, DNS_TYPES[response.type], result, response.ttl,
+                                        .format(response.name, dns_str(response.type), result, response.ttl,
                                                 extra_msg), eth, ip_addr)
 
 
