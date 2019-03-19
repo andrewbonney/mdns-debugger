@@ -232,7 +232,7 @@ def analyse_response(header, mdns, eth, ip_addr):
         response_tracking[ip_addr] = {"pkt_count": 1}
     else:
         response_tracking[ip_addr]["pkt_count"] += 1
-    for response in mdns.an:
+    for response in mdns.an + mdns.ar:
         if response.name not in active_queries:
             active_queries[response.name] = {}
         if response.type not in active_queries[response.name]:
