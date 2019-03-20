@@ -180,7 +180,7 @@ def analyse_mdns(header, udp, eth, ip_addr):
             log_invalid(header.getts(), "Responding host is using one-shot responses with a source port of 5353 and is "
                                         "not compliant with mDNS", eth, ip_addr)
 
-    if len(mdns.qd) == 0 and mdns_query:
+    if len(mdns.qd) == 0 and len(mdns.an) == 0 and mdns_query:
         log_invalid(header.getts(), "mDNS query sent without any questions", eth, ip_addr)
     if len(mdns.an) == 0 and mdns_response:
         log_invalid(header.getts(), "mDNS response sent without any responses", eth, ip_addr)
