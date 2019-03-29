@@ -356,9 +356,9 @@ def print_report(packet_count, duration):
         sort_dict[ip_src] = query_tracking[ip_src]["pkt_count"]
     for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
         rate = round(sort_dict[ip_src]/float(duration), 2)
-        if rate >= 0.5:
+        if rate >= 0.2: # 1 every 5 seconds
             print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-        elif rate >= 0.05:
+        elif rate >= 0.016: # 1 every 60 seconds
             print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
         else:
             print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
@@ -369,9 +369,9 @@ def print_report(packet_count, duration):
         sort_dict[ip_src] = response_tracking[ip_src]["pkt_count"]
     for ip_src in sorted(sort_dict, key=sort_dict.get, reverse=True):
         rate = round(sort_dict[ip_src]/float(duration), 2)
-        if rate >= 0.5:
+        if rate >= 0.2: # 1 every 5 seconds
             print(Fore.RED + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
-        elif rate >= 0.05:
+        elif rate >= 0.016: # 1 every 60 seconds
             print(Fore.YELLOW + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
         else:
             print(Style.RESET_ALL + "{} ({} packets total, {} per second)".format(ip_src, sort_dict[ip_src], rate))
