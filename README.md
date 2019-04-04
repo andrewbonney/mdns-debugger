@@ -16,6 +16,8 @@ This application captures all traffic sent to the relevant IPv4 and IPv6 multica
 $ pip3 install -r requirements.txt
 ```
 
+Note that 'pcapy' requires that 'libpcap-dev' is available on the system. This can be installed via 'apt-get' on Ubuntu.
+
 ## Usage
 
 Live capture and analysis from a selected network interface:
